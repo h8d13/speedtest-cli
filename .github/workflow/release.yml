@@ -1,0 +1,41 @@
+name: Release
+
+on:
+  push:
+    branches: [ master ]
+    paths:
+      - 'speedtest.py'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+
+      - name: Set version info
+        run: |
+          PKGVER=$(grep -E '^__version__ =' speedtest.py | cut -d= -f2)
+          PKGREL=$(grep -E '^__version__ =' speedtest.py | cut -d= -f2)
+          echo "VER=v${PKGVER}-${PKGREL}" >> "$GITHUB_ENV"
+          echo "SHA=$(git rev-parse --short HEAD)" >> "$GITHUB_ENV"
+
+      - name: Create release archive
+        run: tar --exclude='.git' -czf /tmp/speedtest-${{ env.VER }}.tar.gz -C "$GITHUB_WORKSPACE" .
+
+      - name: Delete existing latest tag
+        run: |
+          git push origin :refs/tags/latest || true
+          gh release delete latest --yes || true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish rolling latest
+        uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda # v3
+        with:
+          tag_name: latest
+          name: ${{ env.VER }}-${{ env.SHA }}
+          make_latest: true
+          files: /tmp/speedtest-${{ env.VER }}.tar.gz
