@@ -45,7 +45,17 @@ or
 
     git clone https://github.com/sivel/speedtest-cli.git
     cd speedtest-cli
-    python setup.py install
+    pip install .
+
+Building a wheel
+~~~~~~~~~~~~~~~~
+
+::
+
+    git clone https://github.com/sivel/speedtest-cli.git
+    cd speedtest-cli
+    python -m build --wheel
+    pip install dist/*.whl
 
 Just download (Like the way it used to be)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
