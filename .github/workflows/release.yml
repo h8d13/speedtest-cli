@@ -23,7 +23,14 @@ jobs:
           echo "SHA=$(git rev-parse --short HEAD)" >> "$GITHUB_ENV"
 
       - name: Create release archive
-        run: tar --exclude='.git' -czf /tmp/speedtest-${{ env.VER }}.tar.gz -C "$GITHUB_WORKSPACE" .
+        run: |
+          STAGE="speedtest-cli-${VER#v}"
+          mkdir "/tmp/$STAGE"
+          cp -a "$GITHUB_WORKSPACE/." "/tmp/$STAGE"
+          rm -rf "/tmp/$STAGE/.git" "/tmp/$STAGE/.github" "/tmp/$STAGE/tests" \
+                 "/tmp/$STAGE/CONTRIBUTING.md" "/tmp/$STAGE/tox.ini" \
+                 "/tmp/$STAGE/.gitignore" "/tmp/$STAGE/.travis.yml" "/tmp/$STAGE/MANIFEST.in"
+          tar -czf "/tmp/speedtest-${VER}.tar.gz" -C /tmp "$STAGE"
 
       - name: Publish tagged release
         uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda # v3
