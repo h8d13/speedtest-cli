@@ -15,7 +15,6 @@ maintainers = [{ name = "Eihdran Lego", email = "hadean-eon-dev@proton.me" }]
 keywords = ["speedtest", "speedtest.net"]
 classifiers = [
     "Development Status :: 5 - Production/Stable",
-    "Programming Language :: Python",
     "Environment :: Console",
     "Operating System :: OS Independent",
     "Programming Language :: Python",
