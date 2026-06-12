@@ -1,6 +1,7 @@
 name: Release
 
 on:
+  workflow_dispatch:
   push:
     branches: [ master ]
     paths:
@@ -17,9 +18,8 @@ jobs:
 
       - name: Set version info
         run: |
-          PKGVER=$(grep -E '^__version__ =' speedtest.py | cut -d= -f2)
-          PKGREL=$(grep -E '^__version__ =' speedtest.py | cut -d= -f2)
-          echo "VER=v${PKGVER}-${PKGREL}" >> "$GITHUB_ENV"
+          PKGVER=$(sed -nE "s/^__version__ = '([^']+)'.*/\1/p" speedtest.py)
+          echo "VER=v${PKGVER}" >> "$GITHUB_ENV"
           echo "SHA=$(git rev-parse --short HEAD)" >> "$GITHUB_ENV"
 
       - name: Create release archive
