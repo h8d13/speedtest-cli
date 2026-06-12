@@ -36,7 +36,7 @@ except ImportError:
     gzip = None
     GZIP_BASE = object
 
-__version__ = '2.1.4-1' # used by pyproject.toml automatically, converted to standard semver
+__version__ = '2.1.4-1'  # read by pyproject.toml, normalized to semver
 
 
 class FakeShutdownEvent(object):
