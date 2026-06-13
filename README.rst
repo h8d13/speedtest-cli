@@ -4,9 +4,6 @@ speedtest-cli
 Command line interface for testing internet bandwidth using
 speedtest.net
 
-.. image:: https://img.shields.io/pypi/v/speedtest-cli.svg
-        :target: https://pypi.python.org/pypi/speedtest-cli/
-        :alt: Latest Version
 .. image:: https://img.shields.io/pypi/l/speedtest-cli.svg
         :target: https://pypi.python.org/pypi/speedtest-cli/
         :alt: License
@@ -19,31 +16,18 @@ speedtest-cli works with Python 2.4-3.14
 Installation
 ------------
 
-pip / easy\_install
-~~~~~~~~~~~~~~~~~~~
-
-::
-
-    pip install speedtest-cli
-
-or
-
-::
-
-    easy_install speedtest-cli
-
 Github
 ~~~~~~
 
 ::
 
-    pip install git+https://github.com/sivel/speedtest-cli.git
+    pip install git+https://github.com/h8d13/speedtest-cli.git
 
 or
 
 ::
 
-    git clone https://github.com/sivel/speedtest-cli.git
+    git clone https://github.com/h8d13/speedtest-cli.git
     cd speedtest-cli
     pip install .
 
@@ -52,7 +36,7 @@ Building a wheel
 
 ::
 
-    git clone https://github.com/sivel/speedtest-cli.git
+    git clone https://github.com/h8d13/speedtest-cli.git
     cd speedtest-cli
     python -m build --wheel
     pip install dist/*.whl
@@ -62,14 +46,14 @@ Just download (Like the way it used to be)
 
 ::
 
-    wget -O speedtest-cli https://raw.githubusercontent.com/sivel/speedtest-cli/master/speedtest.py
+    wget -O speedtest-cli https://raw.githubusercontent.com/h8d13/speedtest-cli/master/speedtest.py
     chmod +x speedtest-cli
 
 or
 
 ::
 
-    curl -Lo speedtest-cli https://raw.githubusercontent.com/sivel/speedtest-cli/master/speedtest.py
+    curl -Lo speedtest-cli https://raw.githubusercontent.com/h8d13/speedtest-cli/master/speedtest.py
     chmod +x speedtest-cli
 
 Usage
@@ -127,12 +111,6 @@ Usage
                             support systems with insufficient memory, use this
                             option to avoid a MemoryError
       --version             Show the version number and exit
-
-
-Python API
-----------
-
-See the `wiki <https://github.com/sivel/speedtest-cli/wiki>`_.
 
 
 Inconsistency
