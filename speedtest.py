@@ -18,6 +18,8 @@
 import csv
 import datetime
 import errno
+import gzip
+import json
 import math
 import os
 import platform
@@ -28,13 +30,24 @@ import sys
 import threading
 import timeit
 import xml.parsers.expat
+import xml.etree.ElementTree as ET
+from argparse import ArgumentParser as ArgParser, SUPPRESS as ARG_SUPPRESS
+from hashlib import md5
+from http.client import HTTPConnection, HTTPSConnection, BadStatusLine
+from io import BytesIO, StringIO, TextIOWrapper, FileIO
+from queue import Queue
+from urllib.parse import urlparse, parse_qs
+from urllib.request import (urlopen, Request, HTTPError, URLError,
+                            AbstractHTTPHandler, ProxyHandler,
+                            HTTPDefaultErrorHandler, HTTPRedirectHandler,
+                            HTTPErrorProcessor, OpenerDirector)
 
 try:
-    import gzip
-    GZIP_BASE = gzip.GzipFile
+    import ssl
 except ImportError:
-    gzip = None
-    GZIP_BASE = object
+    ssl = None
+
+GZIP_BASE = gzip.GzipFile
 
 __version__ = '2.1.4-1'  # read by pyproject.toml, normalized to semver
 
@@ -55,252 +68,66 @@ class FakeShutdownEvent(object):
 # Some global variables we use
 DEBUG = False
 _GLOBAL_DEFAULT_TIMEOUT = object()
-PY25PLUS = sys.version_info[:2] >= (2, 5)
-PY26PLUS = sys.version_info[:2] >= (2, 6)
-PY32PLUS = sys.version_info[:2] >= (3, 2)
-PY310PLUS = sys.version_info[:2] >= (3, 10)
 
-# Begin import game to handle Python 2 and Python 3
-try:
-    import json
-except ImportError:
-    try:
-        import simplejson as json
-    except ImportError:
-        json = None
+ET_Element = ET.Element
+etree_iter = ET.Element.iter
+thread_is_alive = threading.Thread.is_alive
 
-try:
-    import xml.etree.ElementTree as ET
-    try:
-        from xml.etree.ElementTree import _Element as ET_Element
-    except ImportError:
-        pass
-except ImportError:
-    from xml.dom import minidom as DOM
-    from xml.parsers.expat import ExpatError
-    ET = None
+PARSER_TYPE_INT = int
+PARSER_TYPE_STR = str
+PARSER_TYPE_FLOAT = float
 
-try:
-    from urllib2 import (urlopen, Request, HTTPError, URLError,
-                         AbstractHTTPHandler, ProxyHandler,
-                         HTTPDefaultErrorHandler, HTTPRedirectHandler,
-                         HTTPErrorProcessor, OpenerDirector)
-except ImportError:
-    from urllib.request import (urlopen, Request, HTTPError, URLError,
-                                AbstractHTTPHandler, ProxyHandler,
-                                HTTPDefaultErrorHandler, HTTPRedirectHandler,
-                                HTTPErrorProcessor, OpenerDirector)
-
-try:
-    from httplib import HTTPConnection, BadStatusLine
-except ImportError:
-    from http.client import HTTPConnection, BadStatusLine
-
-try:
-    from httplib import HTTPSConnection
-except ImportError:
-    try:
-        from http.client import HTTPSConnection
-    except ImportError:
-        HTTPSConnection = None
-
-try:
-    from httplib import FakeSocket
-except ImportError:
-    FakeSocket = None
-
-try:
-    from Queue import Queue
-except ImportError:
-    from queue import Queue
-
-try:
-    from urlparse import urlparse
-except ImportError:
-    from urllib.parse import urlparse
-
-try:
-    from urlparse import parse_qs
-except ImportError:
-    try:
-        from urllib.parse import parse_qs
-    except ImportError:
-        from cgi import parse_qs
-
-try:
-    from hashlib import md5
-except ImportError:
-    from md5 import md5
-
-try:
-    from argparse import ArgumentParser as ArgParser
-    from argparse import SUPPRESS as ARG_SUPPRESS
-    PARSER_TYPE_INT = int
-    PARSER_TYPE_STR = str
-    PARSER_TYPE_FLOAT = float
-except ImportError:
-    from optparse import OptionParser as ArgParser
-    from optparse import SUPPRESS_HELP as ARG_SUPPRESS
-    PARSER_TYPE_INT = 'int'
-    PARSER_TYPE_STR = 'string'
-    PARSER_TYPE_FLOAT = 'float'
-
-try:
-    from cStringIO import StringIO
-    BytesIO = None
-except ImportError:
-    try:
-        from StringIO import StringIO
-        BytesIO = None
-    except ImportError:
-        from io import StringIO, BytesIO
-
-try:
-    import __builtin__
-except ImportError:
-    import builtins
-    from io import TextIOWrapper, FileIO
-
-    class _Py3Utf8Output(TextIOWrapper):
-        """UTF-8 encoded wrapper around stdout for py3, to override
-        ASCII stdout
-        """
-        def __init__(self, f, **kwargs):
-            buf = FileIO(f.fileno(), 'w')
-            super(_Py3Utf8Output, self).__init__(
-                buf,
-                encoding='utf8',
-                errors='strict'
-            )
-
-        def write(self, s):
-            super(_Py3Utf8Output, self).write(s)
-            self.flush()
-
-    _py3_print = getattr(builtins, 'print')
-    try:
-        _py3_utf8_stdout = _Py3Utf8Output(sys.stdout)
-        _py3_utf8_stderr = _Py3Utf8Output(sys.stderr)
-    except OSError:
-        # sys.stdout/sys.stderr is not a compatible stdout/stderr object
-        # just use it and hope things go ok
-        _py3_utf8_stdout = sys.stdout
-        _py3_utf8_stderr = sys.stderr
-
-    def to_utf8(v):
-        """No-op encode to utf-8 for py3"""
-        return v
-
-    def print_(*args, **kwargs):
-        """Wrapper function for py3 to print, with a utf-8 encoded stdout"""
-        if kwargs.get('file') == sys.stderr:
-            kwargs['file'] = _py3_utf8_stderr
-        else:
-            kwargs['file'] = kwargs.get('file', _py3_utf8_stdout)
-        _py3_print(*args, **kwargs)
-else:
-    del __builtin__
-
-    def to_utf8(v):
-        """Encode value to utf-8 if possible for py2"""
-        try:
-            return v.encode('utf8', 'strict')
-        except AttributeError:
-            return v
-
-    def print_(*args, **kwargs):
-        """The new-style print function for Python 2.4 and 2.5.
-
-        Taken from https://pypi.python.org/pypi/six/
-
-        Modified to set encoding to UTF-8 always, and to flush after write
-        """
-        fp = kwargs.pop("file", sys.stdout)
-        if fp is None:
-            return
-
-        def write(data):
-            if not isinstance(data, basestring):
-                data = str(data)
-            # If the file has an encoding, encode unicode with it.
-            encoding = 'utf8'  # Always trust UTF-8 for output
-            if (isinstance(fp, file) and
-                    isinstance(data, unicode) and
-                    encoding is not None):
-                errors = getattr(fp, "errors", None)
-                if errors is None:
-                    errors = "strict"
-                data = data.encode(encoding, errors)
-            fp.write(data)
-            fp.flush()
-        want_unicode = False
-        sep = kwargs.pop("sep", None)
-        if sep is not None:
-            if isinstance(sep, unicode):
-                want_unicode = True
-            elif not isinstance(sep, str):
-                raise TypeError("sep must be None or a string")
-        end = kwargs.pop("end", None)
-        if end is not None:
-            if isinstance(end, unicode):
-                want_unicode = True
-            elif not isinstance(end, str):
-                raise TypeError("end must be None or a string")
-        if kwargs:
-            raise TypeError("invalid keyword arguments to print()")
-        if not want_unicode:
-            for arg in args:
-                if isinstance(arg, unicode):
-                    want_unicode = True
-                    break
-        if want_unicode:
-            newline = unicode("\n")
-            space = unicode(" ")
-        else:
-            newline = "\n"
-            space = " "
-        if sep is None:
-            sep = space
-        if end is None:
-            end = newline
-        for i, arg in enumerate(args):
-            if i:
-                write(sep)
-            write(arg)
-        write(end)
-
-# Exception "constants" to support Python 2 through Python 3
-try:
-    import ssl
-    try:
-        CERT_ERROR = (ssl.CertificateError,)
-    except AttributeError:
-        CERT_ERROR = tuple()
-
+if ssl is not None:
+    CERT_ERROR = (ssl.CertificateError,)
     HTTP_ERRORS = (
         (HTTPError, URLError, socket.error, ssl.SSLError, BadStatusLine) +
         CERT_ERROR
     )
-except ImportError:
-    ssl = None
+else:
     HTTP_ERRORS = (HTTPError, URLError, socket.error, BadStatusLine)
 
-if PY32PLUS:
-    etree_iter = ET.Element.iter
-elif PY25PLUS:
-    etree_iter = ET_Element.getiterator
 
-if PY26PLUS:
-    thread_is_alive = threading.Thread.is_alive
-else:
-    thread_is_alive = threading.Thread.isAlive
+class _Py3Utf8Output(TextIOWrapper):
+    """UTF-8 encoded wrapper around stdout, to override ASCII stdout"""
+    def __init__(self, f, **kwargs):
+        buf = FileIO(f.fileno(), 'w')
+        super(_Py3Utf8Output, self).__init__(
+            buf,
+            encoding='utf8',
+            errors='strict'
+        )
+
+    def write(self, s):
+        super(_Py3Utf8Output, self).write(s)
+        self.flush()
+
+
+try:
+    _py3_utf8_stdout = _Py3Utf8Output(sys.stdout)
+    _py3_utf8_stderr = _Py3Utf8Output(sys.stderr)
+except OSError:
+    # sys.stdout/sys.stderr is not a compatible stdout/stderr object
+    # just use it and hope things go ok
+    _py3_utf8_stdout = sys.stdout
+    _py3_utf8_stderr = sys.stderr
+
+
+def to_utf8(v):
+    """No-op encode to utf-8"""
+    return v
+
+
+def print_(*args, **kwargs):
+    """Wrapper function for print, with a utf-8 encoded stdout"""
+    if kwargs.get('file') == sys.stderr:
+        kwargs['file'] = _py3_utf8_stderr
+    else:
+        kwargs['file'] = kwargs.get('file', _py3_utf8_stdout)
+    print(*args, **kwargs)
 
 
 def event_is_set(event):
-    try:
-        return event.is_set()
-    except AttributeError:
-        return event.isSet()
+    return event.is_set()
 
 
 class SpeedtestException(Exception):
@@ -499,15 +326,6 @@ if HTTPSConnection:
                         self.sock.server_hostname = self.host
                     except AttributeError:
                         pass
-            elif FakeSocket:
-                # Python 2.4/2.5 support
-                try:
-                    self.sock = FakeSocket(self.sock, socket.ssl(self.sock))
-                except AttributeError:
-                    raise SpeedtestException(
-                        'This version of Python does not support HTTPS/SSL '
-                        'functionality'
-                    )
             else:
                 raise SpeedtestException(
                     'This version of Python does not support HTTPS/SSL '
@@ -620,17 +438,12 @@ class GzipDecodedResponse(GZIP_BASE):
     """A file-like object to decode a response encoded with the gzip
     method, as described in RFC 1952.
 
-    Largely copied from ``xmlrpclib``/``xmlrpc.client`` and modified
-    to work for py2.4-py3
+    Largely copied from ``xmlrpclib``/``xmlrpc.client``.
     """
     def __init__(self, response):
         # response doesn't support tell() and read(), required by
         # GzipFile
-        if not gzip:
-            raise SpeedtestHTTPError('HTTP response body is gzip encoded, '
-                                     'but gzip support is not available')
-        IO = BytesIO or StringIO
-        self.io = IO()
+        self.io = BytesIO()
         while 1:
             chunk = response.read(1024)
             if len(chunk) == 0:
@@ -762,17 +575,6 @@ def get_response_stream(response):
     return response
 
 
-def get_attributes_by_tag_name(dom, tag_name):
-    """Retrieve an attribute from an XML document and return it in a
-    consistent format
-
-    Only used with xml.dom.minidom, which is likely only to be used
-    with python versions older than 2.5
-    """
-    elem = dom.getElementsByTagName(tag_name)[0]
-    return dict(list(elem.attributes.items()))
-
-
 def print_dots(shutdown_event):
     """Built in callback function used by Thread classes for printing
     status
@@ -852,9 +654,8 @@ class HTTPUploaderData(object):
     def pre_allocate(self):
         chars = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ'
         multiplier = int(round(int(self.length) / 36.0))
-        IO = BytesIO or StringIO
         try:
-            self._data = IO(
+            self._data = BytesIO(
                 ('content1=%s' %
                  (chars * multiplier)[0:int(self.length) - 9]
                  ).encode()
@@ -1158,32 +959,17 @@ class Speedtest(object):
         printer('Config XML:\n%s' % configxml, debug=True)
 
         try:
-            try:
-                root = ET.fromstring(configxml)
-            except ET.ParseError:
-                e = get_exception()
-                raise SpeedtestConfigError(
-                    'Malformed speedtest.net configuration: %s' % e
-                )
-            server_config = root.find('server-config').attrib
-            download = root.find('download').attrib
-            upload = root.find('upload').attrib
-            # times = root.find('times').attrib
-            client = root.find('client').attrib
-
-        except AttributeError:
-            try:
-                root = DOM.parseString(configxml)
-            except ExpatError:
-                e = get_exception()
-                raise SpeedtestConfigError(
-                    'Malformed speedtest.net configuration: %s' % e
-                )
-            server_config = get_attributes_by_tag_name(root, 'server-config')
-            download = get_attributes_by_tag_name(root, 'download')
-            upload = get_attributes_by_tag_name(root, 'upload')
-            # times = get_attributes_by_tag_name(root, 'times')
-            client = get_attributes_by_tag_name(root, 'client')
+            root = ET.fromstring(configxml)
+        except ET.ParseError:
+            e = get_exception()
+            raise SpeedtestConfigError(
+                'Malformed speedtest.net configuration: %s' % e
+            )
+        server_config = root.find('server-config').attrib
+        download = root.find('download').attrib
+        upload = root.find('upload').attrib
+        # times = root.find('times').attrib
+        client = root.find('client').attrib
 
         ignore_servers = [
             int(i) for i in server_config['ignoreids'].split(',') if i
@@ -1308,31 +1094,18 @@ class Speedtest(object):
 
                 try:
                     try:
-                        try:
-                            root = ET.fromstring(serversxml)
-                        except ET.ParseError:
-                            e = get_exception()
-                            raise SpeedtestServersError(
-                                'Malformed speedtest.net server list: %s' % e
-                            )
-                        elements = etree_iter(root, 'server')
-                    except AttributeError:
-                        try:
-                            root = DOM.parseString(serversxml)
-                        except ExpatError:
-                            e = get_exception()
-                            raise SpeedtestServersError(
-                                'Malformed speedtest.net server list: %s' % e
-                            )
-                        elements = root.getElementsByTagName('server')
+                        root = ET.fromstring(serversxml)
+                    except ET.ParseError:
+                        e = get_exception()
+                        raise SpeedtestServersError(
+                            'Malformed speedtest.net server list: %s' % e
+                        )
+                    elements = etree_iter(root, 'server')
                 except (SyntaxError, xml.parsers.expat.ExpatError):
                     raise ServersRetrievalError()
 
                 for server in elements:
-                    try:
-                        attrib = server.attrib
-                    except AttributeError:
-                        attrib = dict(list(server.attributes.items()))
+                    attrib = server.attrib
 
                     if servers and int(attrib.get('id')) not in servers:
                         continue
@@ -1803,7 +1576,7 @@ def validate_optional_args(args):
     with an error stating which module is missing.
     """
     optional_args = {
-        'json': ('json/simplejson python module', json),
+        'json': ('json python module', json),
         'secure': ('SSL support', HTTPSConnection),
     }
 
