@@ -1,40 +1,35 @@
-# Maintainer: Levente Polyak <anthraxx[at]archlinux[dot]org>
-# Maintainer: T.J. Townsend <blakkheim@archlinux.org>
-# Contributor: William Grieshaber <me@zee.li>
-# Contributor: Victor Aurélio <victoraur dot santos at gmail dot com>
+# Maintainer: Eihdran Lego <hadean-eon-dev@proton.me>
 
-pkgname=speedtest-cli
-pkgver=2.1.3
-pkgrel=10
-pkgdesc='Command line interface for testing internet bandwidth using speedtest.net'
-url='https://github.com/sivel/speedtest-cli'
+pkgname=speedtest-cli-git
+pkgver=r315.gb2d73e9
+pkgrel=1
+pkgdesc='CLI for testing internet bandwidth using speedtest.net (py3 fork)'
 arch=('any')
+_repo="h8d13/speedtest-cli"
+url="https://github.com/${_repo}"
+
 license=('Apache-2.0')
 depends=('python')
-makedepends=('python-setuptools')
-source=(https://github.com/sivel/speedtest-cli/archive/v${pkgver}/${pkgname}-${pkgver}.tar.gz
-        serverlist.patch)
-sha512sums=('e2ecd9b4eea95e3641045c3da217ec5a39846b26c1f773fdd31c6ffe3cb5e35341320fc1992f865af48afd1a704c4d4224f9ec4048abb69131ee2f32385ae94c'
-            'b8026642d76494be8af608f16e6b3c8470a11309813f989cb07e71574ea2ec7a700c5f112d8dcaff284ebcd086ec93be0eacef2eaf2caaa81847662c329337ea')
+makedepends=('git' 'python-build' 'python-installer' 'python-setuptools' 'python-wheel')
+provides=('speedtest-cli' 'speedtest')
+conflicts=('speedtest-cli' 'speedtest')
+source=("${pkgname}::git+${url}.git")
+sha256sums=('SKIP')
 
-prepare() {
-  # FS#75206
-  # https://github.com/sivel/speedtest-cli/pull/765
-  cd ${pkgname}-${pkgver}
-  patch -Np1 -i ../serverlist.patch
+pkgver() {
+	cd "${srcdir}/${pkgname}"
+	printf 'r%s.g%s' "$(git rev-list --count HEAD)" "$(git rev-parse --short HEAD)"
 }
 
 build() {
-  cd ${pkgname}-${pkgver}
-  python setup.py build
+	cd "${srcdir}/${pkgname}"
+	python -m build --wheel --no-isolation
 }
 
-package(){
-  cd ${pkgname}-${pkgver}
-  python setup.py install -O1 --root="${pkgdir}" --prefix=/usr --skip-build
-  install -Dm 644 LICENSE -t "${pkgdir}/usr/share/licenses/${pkgname}"
-  install -Dm 644 README.rst -t "${pkgdir}/usr/share/doc/${pkgname}"
-  install -Dm 644 ${pkgname}.1 -t "${pkgdir}/usr/share/man/man1"
+package() {
+	cd "${srcdir}/${pkgname}"
+	# Installs the speedtest / speedtest-cli entry-point scripts from the wheel.
+	python -m installer --destdir="${pkgdir}" dist/*.whl
+	install -Dm644 LICENSE -t "${pkgdir}/usr/share/licenses/${pkgname}"
+	install -Dm644 speedtest-cli.1 -t "${pkgdir}/usr/share/man/man1"
 }
-
-# vim: ts=2 sw=2 et:
