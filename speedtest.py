@@ -213,7 +213,8 @@ def create_connection(address, timeout=_GLOBAL_DEFAULT_TIMEOUT,
     for the socket to bind as a source address before making the connection.
     An host of '' or port 0 tells the OS to use the default.
 
-    Largely vendored from Python 2.7, modified to work with Python 2.4
+    Largely vendored from the stdlib, kept for explicit control over
+    source_address binding
     """
 
     host, port = address
@@ -242,9 +243,7 @@ def create_connection(address, timeout=_GLOBAL_DEFAULT_TIMEOUT,
 
 
 class SpeedtestHTTPConnection(HTTPConnection):
-    """Custom HTTPConnection to support source_address across
-    Python 2.4 - Python 3
-    """
+    """Custom HTTPConnection to support source_address"""
     def __init__(self, *args, **kwargs):
         source_address = kwargs.pop('source_address', None)
         timeout = kwargs.pop('timeout', 10)
@@ -277,9 +276,7 @@ class SpeedtestHTTPConnection(HTTPConnection):
 
 if HTTPSConnection:
     class SpeedtestHTTPSConnection(HTTPSConnection):
-        """Custom HTTPSConnection to support source_address across
-        Python 2.4 - Python 3
-        """
+        """Custom HTTPSConnection to support source_address"""
         default_port = 443
 
         def __init__(self, *args, **kwargs):
@@ -334,8 +331,8 @@ if HTTPSConnection:
 
 
 def _build_connection(connection, source_address, timeout, context=None):
-    """Cross Python 2.4 - Python 3 callable to build an ``HTTPConnection`` or
-    ``HTTPSConnection`` with the args we need
+    """Build an ``HTTPConnection`` or ``HTTPSConnection`` with the args
+    we need
 
     Called from ``http(s)_open`` methods of ``SpeedtestHTTPHandler`` or
     ``SpeedtestHTTPSHandler``
@@ -460,9 +457,7 @@ class GzipDecodedResponse(GZIP_BASE):
 
 
 def get_exception():
-    """Helper function to work with py2.4-py3 for getting the current
-    exception in a try/except block
-    """
+    """Get the current exception in a try/except block"""
     return sys.exc_info()[1]
 
 
