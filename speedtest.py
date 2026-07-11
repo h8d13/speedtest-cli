@@ -1192,6 +1192,14 @@ class Speedtest(object):
                         # so the probe still measures one request
                         h.close()
                         latency_url = urljoin(latency_url, location)
+                        # adopt the canonical host for download/upload
+                        # too: 307 POSTs are never auto-followed (the
+                        # body lands on the legacy endpoint and is
+                        # discarded), and GETs pay a double connect
+                        server['url'] = '%s/%s' % (
+                            os.path.dirname(latency_url),
+                            os.path.basename(server['url'])
+                        )
                         printer('%s %s' % ('GET', latency_url),
                                 debug=True)
                         h, r, total = timed_get(latency_url, user_agent,
