@@ -36,7 +36,7 @@ from hashlib import md5
 from http.client import HTTPConnection, HTTPSConnection, BadStatusLine
 from io import BytesIO, StringIO, TextIOWrapper, FileIO
 from queue import Queue
-from urllib.parse import urlparse, parse_qs
+from urllib.parse import urlparse, parse_qs, urljoin
 from urllib.request import (urlopen, Request, HTTPError, URLError,
                             AbstractHTTPHandler, ProxyHandler,
                             HTTPDefaultErrorHandler, HTTPRedirectHandler,
@@ -481,6 +481,34 @@ def catch_request(request, opener=None):
         return uh, False
     except HTTP_ERRORS as e:
         return None, e
+
+
+def timed_get(url, user_agent, source_address_tuple):
+    """Issue a single raw GET and return ``(connection, response,
+    seconds)``
+
+    Bypasses the opener on purpose: redirect handling would fold two
+    round-trips into one timing, so the caller decides what to do
+    with 30x responses
+    """
+    urlparts = urlparse(url)
+    if urlparts[0] == 'https':
+        h = SpeedtestHTTPSConnection(
+            urlparts[1],
+            source_address=source_address_tuple
+        )
+    else:
+        h = SpeedtestHTTPConnection(
+            urlparts[1],
+            source_address=source_address_tuple
+        )
+    headers = {'User-Agent': user_agent}
+    path = '%s?%s' % (urlparts[2], urlparts[4])
+    start = timeit.default_timer()
+    h.request("GET", path, headers=headers)
+    r = h.getresponse()
+    total = (timeit.default_timer() - start)
+    return h, r, total
 
 
 def get_response_stream(response):
@@ -1154,24 +1182,20 @@ class Speedtest(object):
                 this_latency_url = '%s.%s' % (latency_url, i)
                 printer('%s %s' % ('GET', this_latency_url),
                         debug=True)
-                urlparts = urlparse(latency_url)
                 try:
-                    if urlparts[0] == 'https':
-                        h = SpeedtestHTTPSConnection(
-                            urlparts[1],
-                            source_address=source_address_tuple
-                        )
-                    else:
-                        h = SpeedtestHTTPConnection(
-                            urlparts[1],
-                            source_address=source_address_tuple
-                        )
-                    headers = {'User-Agent': user_agent}
-                    path = '%s?%s' % (urlparts[2], urlparts[4])
-                    start = timeit.default_timer()
-                    h.request("GET", path, headers=headers)
-                    r = h.getresponse()
-                    total = (timeit.default_timer() - start)
+                    h, r, total = timed_get(latency_url, user_agent,
+                                            source_address_tuple)
+                    location = r.getheader('Location')
+                    if r.status in (301, 302, 307, 308) and location:
+                        # Ookla fleet redirects latency.txt to the
+                        # server's canonical https host; retime there
+                        # so the probe still measures one request
+                        h.close()
+                        latency_url = urljoin(latency_url, location)
+                        printer('%s %s' % ('GET', latency_url),
+                                debug=True)
+                        h, r, total = timed_get(latency_url, user_agent,
+                                                source_address_tuple)
                 except HTTP_ERRORS as e:
                     printer('ERROR: %r' % e, debug=True)
                     cum.append(3600)
@@ -1185,7 +1209,10 @@ class Speedtest(object):
                 h.close()
 
             avg = round((sum(cum) / 6) * 1000.0, 3)
-            results[avg] = server
+            # keep the closer server on latency ties (servers are
+            # sorted by distance), instead of last-probed-wins
+            if avg not in results:
+                results[avg] = server
 
         try:
             fastest = sorted(results.keys())[0]
