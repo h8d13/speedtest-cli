@@ -53,25 +53,21 @@ __version__ = '2.1.4-1'  # read by pyproject.toml, normalized to semver
 
 
 class FakeShutdownEvent(object):
-    """Class to fake a threading.Event.isSet so that users of this module
+    """Class to fake a threading.Event so that users of this module
     are not required to register their own threading.Event()
     """
 
     @staticmethod
-    def isSet():
+    def is_set():
         "Dummy method to always return false"""
         return False
-
-    is_set = isSet
 
 
 # Some global variables we use
 DEBUG = False
-_GLOBAL_DEFAULT_TIMEOUT = object()
 
 ET_Element = ET.Element
 etree_iter = ET.Element.iter
-thread_is_alive = threading.Thread.is_alive
 
 PARSER_TYPE_INT = int
 PARSER_TYPE_STR = str
@@ -124,10 +120,6 @@ def print_(*args, **kwargs):
     else:
         kwargs['file'] = kwargs.get('file', _py3_utf8_stdout)
     print(*args, **kwargs)
-
-
-def event_is_set(event):
-    return event.is_set()
 
 
 class SpeedtestException(Exception):
@@ -200,48 +192,6 @@ class SpeedtestMissingBestServer(SpeedtestException):
     """get_best_server not called or not able to determine best server"""
 
 
-def create_connection(address, timeout=_GLOBAL_DEFAULT_TIMEOUT,
-                      source_address=None):
-    """Connect to *address* and return the socket object.
-
-    Convenience function.  Connect to *address* (a 2-tuple ``(host,
-    port)``) and return the socket object.  Passing the optional
-    *timeout* parameter will set the timeout on the socket instance
-    before attempting to connect.  If no *timeout* is supplied, the
-    global default timeout setting returned by :func:`getdefaulttimeout`
-    is used.  If *source_address* is set it must be a tuple of (host, port)
-    for the socket to bind as a source address before making the connection.
-    An host of '' or port 0 tells the OS to use the default.
-
-    Largely vendored from the stdlib, kept for explicit control over
-    source_address binding
-    """
-
-    host, port = address
-    err = None
-    for res in socket.getaddrinfo(host, port, 0, socket.SOCK_STREAM):
-        af, socktype, proto, canonname, sa = res
-        sock = None
-        try:
-            sock = socket.socket(af, socktype, proto)
-            if timeout is not _GLOBAL_DEFAULT_TIMEOUT:
-                sock.settimeout(float(timeout))
-            if source_address:
-                sock.bind(source_address)
-            sock.connect(sa)
-            return sock
-
-        except socket.error:
-            err = get_exception()
-            if sock is not None:
-                sock.close()
-
-    if err is not None:
-        raise err
-    else:
-        raise socket.error("getaddrinfo returns an empty list")
-
-
 class SpeedtestHTTPConnection(HTTPConnection):
     """Custom HTTPConnection to support source_address"""
     def __init__(self, *args, **kwargs):
@@ -257,18 +207,11 @@ class SpeedtestHTTPConnection(HTTPConnection):
 
     def connect(self):
         """Connect to the host and port specified in __init__."""
-        try:
-            self.sock = socket.create_connection(
-                (self.host, self.port),
-                self.timeout,
-                self.source_address
-            )
-        except (AttributeError, TypeError):
-            self.sock = create_connection(
-                (self.host, self.port),
-                self.timeout,
-                self.source_address
-            )
+        self.sock = socket.create_connection(
+            (self.host, self.port),
+            self.timeout,
+            self.source_address
+        )
 
         if self._tunnel_host:
             self._tunnel()
@@ -292,18 +235,11 @@ if HTTPSConnection:
 
         def connect(self):
             "Connect to a host on a given (SSL) port."
-            try:
-                self.sock = socket.create_connection(
-                    (self.host, self.port),
-                    self.timeout,
-                    self.source_address
-                )
-            except (AttributeError, TypeError):
-                self.sock = create_connection(
-                    (self.host, self.port),
-                    self.timeout,
-                    self.source_address
-                )
+            self.sock = socket.create_connection(
+                (self.host, self.port),
+                self.timeout,
+                self.source_address
+            )
 
             if self._tunnel_host:
                 self._tunnel()
@@ -456,11 +392,6 @@ class GzipDecodedResponse(GZIP_BASE):
             self.io.close()
 
 
-def get_exception():
-    """Get the current exception in a try/except block"""
-    return sys.exc_info()[1]
-
-
 def distance(origin, destination):
     """Determine distance between 2 sets of [lat,lon] in km"""
 
@@ -548,8 +479,7 @@ def catch_request(request, opener=None):
         if request.get_full_url() != uh.geturl():
             printer('Redirected to %s' % uh.geturl(), debug=True)
         return uh, False
-    except HTTP_ERRORS:
-        e = get_exception()
+    except HTTP_ERRORS as e:
         return None, e
 
 
@@ -575,7 +505,7 @@ def print_dots(shutdown_event):
     status
     """
     def inner(current, total, start=False, end=False):
-        if event_is_set(shutdown_event):
+        if shutdown_event.is_set():
             return
 
         sys.stdout.write('.')
@@ -614,7 +544,7 @@ class HTTPDownloader(threading.Thread):
         try:
             if (timeit.default_timer() - self.starttime) <= self.timeout:
                 f = self._opener(self.request)
-                while (not event_is_set(self._shutdown_event) and
+                while (not self._shutdown_event.is_set() and
                         (timeit.default_timer() - self.starttime) <=
                         self.timeout):
                     self.result.append(len(f.read(10240)))
@@ -669,7 +599,7 @@ class HTTPUploaderData(object):
 
     def read(self, n=10240):
         if ((timeit.default_timer() - self.start) <= self.timeout and
-                not event_is_set(self._shutdown_event)):
+                not self._shutdown_event.is_set()):
             chunk = self.data.read(n)
             self.total.append(len(chunk))
             return chunk
@@ -707,16 +637,8 @@ class HTTPUploader(threading.Thread):
         request = self.request
         try:
             if ((timeit.default_timer() - self.starttime) <= self.timeout and
-                    not event_is_set(self._shutdown_event)):
-                try:
-                    f = self._opener(request)
-                except TypeError:
-                    # PY24 expects a string or buffer
-                    # This also causes issues with Ctrl-C, but we will concede
-                    # for the moment that Ctrl-C on PY24 isn't immediate
-                    request = build_request(self.request.get_full_url(),
-                                            data=request.data.read(self.size))
-                    f = self._opener(request)
+                    not self._shutdown_event.is_set()):
+                f = self._opener(request)
                 f.read(11)
                 f.close()
                 self.result = sum(self.request.data.total)
@@ -939,8 +861,8 @@ class Speedtest(object):
         while 1:
             try:
                 configxml_list.append(stream.read(1024))
-            except (OSError, EOFError):
-                raise ConfigRetrievalError(get_exception())
+            except (OSError, EOFError) as e:
+                raise ConfigRetrievalError(e)
             if len(configxml_list[-1]) == 0:
                 break
         stream.close()
@@ -955,8 +877,7 @@ class Speedtest(object):
 
         try:
             root = ET.fromstring(configxml)
-        except ET.ParseError:
-            e = get_exception()
+        except ET.ParseError as e:
             raise SpeedtestConfigError(
                 'Malformed speedtest.net configuration: %s' % e
             )
@@ -1072,8 +993,8 @@ class Speedtest(object):
                 while 1:
                     try:
                         serversxml_list.append(stream.read(1024))
-                    except (OSError, EOFError):
-                        raise ServersRetrievalError(get_exception())
+                    except (OSError, EOFError) as e:
+                        raise ServersRetrievalError(e)
                     if len(serversxml_list[-1]) == 0:
                         break
 
@@ -1090,8 +1011,7 @@ class Speedtest(object):
                 try:
                     try:
                         root = ET.fromstring(serversxml)
-                    except ET.ParseError:
-                        e = get_exception()
+                    except ET.ParseError as e:
                         raise SpeedtestServersError(
                             'Malformed speedtest.net server list: %s' % e
                         )
@@ -1252,8 +1172,7 @@ class Speedtest(object):
                     h.request("GET", path, headers=headers)
                     r = h.getresponse()
                     total = (timeit.default_timer() - start)
-                except HTTP_ERRORS:
-                    e = get_exception()
+                except HTTP_ERRORS as e:
                     printer('ERROR: %r' % e, debug=True)
                     cum.append(3600)
                     continue
@@ -1326,10 +1245,9 @@ class Speedtest(object):
         finished = []
 
         def consumer(q, request_count):
-            _is_alive = thread_is_alive
             while len(finished) < request_count:
                 thread = q.get(True)
-                while _is_alive(thread):
+                while thread.is_alive():
                     thread.join(timeout=0.001)
                 in_flight['threads'] -= 1
                 finished.append(sum(thread.result))
@@ -1343,10 +1261,9 @@ class Speedtest(object):
         start = timeit.default_timer()
         prod_thread.start()
         cons_thread.start()
-        _is_alive = thread_is_alive
-        while _is_alive(prod_thread):
+        while prod_thread.is_alive():
             prod_thread.join(timeout=0.001)
-        while _is_alive(cons_thread):
+        while cons_thread.is_alive():
             cons_thread.join(timeout=0.001)
 
         stop = timeit.default_timer()
@@ -1420,10 +1337,9 @@ class Speedtest(object):
         finished = []
 
         def consumer(q, request_count):
-            _is_alive = thread_is_alive
             while len(finished) < request_count:
                 thread = q.get(True)
-                while _is_alive(thread):
+                while thread.is_alive():
                     thread.join(timeout=0.001)
                 in_flight['threads'] -= 1
                 finished.append(thread.result)
@@ -1437,10 +1353,9 @@ class Speedtest(object):
         start = timeit.default_timer()
         prod_thread.start()
         cons_thread.start()
-        _is_alive = thread_is_alive
-        while _is_alive(prod_thread):
+        while prod_thread.is_alive():
             prod_thread.join(timeout=0.1)
-        while _is_alive(cons_thread):
+        while cons_thread.is_alive():
             cons_thread.join(timeout=0.1)
 
         stop = timeit.default_timer()
@@ -1657,16 +1572,16 @@ def shell():
             timeout=args.timeout,
             secure=args.secure
         )
-    except (ConfigRetrievalError,) + HTTP_ERRORS:
+    except (ConfigRetrievalError,) + HTTP_ERRORS as e:
         printer('Cannot retrieve speedtest configuration', error=True)
-        raise SpeedtestCLIError(get_exception())
+        raise SpeedtestCLIError(e)
 
     if args.list:
         try:
             speedtest.get_servers()
-        except (ServersRetrievalError,) + HTTP_ERRORS:
+        except (ServersRetrievalError,) + HTTP_ERRORS as e:
             printer('Cannot retrieve speedtest server list', error=True)
-            raise SpeedtestCLIError(get_exception())
+            raise SpeedtestCLIError(e)
 
         for _, servers in sorted(speedtest.servers.items()):
             for server in servers:
@@ -1674,8 +1589,7 @@ def shell():
                         '[%(d)0.2f km]' % server)
                 try:
                     printer(line)
-                except IOError:
-                    e = get_exception()
+                except IOError as e:
                     if e.errno != errno.EPIPE:
                         raise
         sys.exit(0)
@@ -1692,9 +1606,9 @@ def shell():
                 'No matched servers: %s' %
                 ', '.join('%s' % s for s in args.server)
             )
-        except (ServersRetrievalError,) + HTTP_ERRORS:
+        except (ServersRetrievalError,) + HTTP_ERRORS as e:
             printer('Cannot retrieve speedtest server list', error=True)
-            raise SpeedtestCLIError(get_exception())
+            raise SpeedtestCLIError(e)
         except InvalidServerIDType:
             raise SpeedtestCLIError(
                 '%s is an invalid server type, must '
@@ -1769,8 +1683,7 @@ def main():
         shell()
     except KeyboardInterrupt:
         printer('\nCancelling...', error=True)
-    except (SpeedtestException, SystemExit):
-        e = get_exception()
+    except (SpeedtestException, SystemExit) as e:
         # Ignore a successful exit, or argparse exit
         if getattr(e, 'code', 1) not in (0, 2):
             msg = '%s' % e
